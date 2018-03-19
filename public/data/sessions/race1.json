@@ -1,0 +1,28 @@
+{
+    "name": "Race #1",
+    "time_left": 96.3,
+    "drivers": [
+        {
+            "name": "Ayrton Senna",
+            "pos": 1,
+            "last_lap": 59.9,
+            "best_lap": 55.1,
+            "avg_lap": 58,
+            "avg_5lap": 59,
+            "start_pos": 3,
+            "inc_env": 0,
+            "inc_car": 1
+        },
+        {
+            "name": "Nigel Mansell",
+            "pos": 2,
+            "last_lap": 56.1,
+            "best_lap": 55.159,
+            "avg_lap": 58.2,
+            "avg_5lap": 56,
+            "start_pos": 5,
+            "inc_env": 0,
+            "inc_car": 0
+        }
+    ]
+}

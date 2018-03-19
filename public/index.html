@@ -13,36 +13,87 @@
 		<script src="semantic/semantic.min.js"></script>
 	</head>
 	<body>
-		<div class="ui menu">
-		  <div class="header item">Brand</div>
-		  <a class="item">Link</a>
-		  <a class="item active">Link</a>
-		  <div class="ui dropdown item" tabindex="0">
-			Dropdown
-			<i class="dropdown icon"></i>
-			<div class="menu transition hidden" tabindex="-1">
-			  <div class="item">Action</div>
-			  <div class="item">Another Action</div>
-			  <div class="item">Something else here</div>
-			  <div class="divider"></div>
-			  <div class="item">Separated Link</div>
-			  <div class="divider"></div>
-			  <div class="item">One more separated link</div>
+		<div id="app">
+			<div class="ui menu">
+				<div class="header item">AC Race Stats</div>
 			</div>
-		  </div>
-		  <div class="right menu">
-			<div class="item">
-			  <div class="ui action left icon input">
-				<i class="search icon"></i>
-				<input type="text" placeholder="Search">
-				<button class="ui button">Submit</button>
-			  </div>
+			
+			<div class="ui container">
+				<!-- <div class="ui four cards">
+						<div class="card">
+							<div class="content">
+								<strong>Race time:</strong> 00:36:46
+							</div>
+							<div class="content">
+									<strong>Time left:</strong> 00:23:14
+							</div>
+							<div class="content">
+									<strong>Best lap:</strong> 01:39.599 (Erelio Akis)
+							</div>
+						</div>
+						<div class="card">
+							<div class="content">
+								<strong>Proximity average:</strong> 150m
+							</div>
+							<div class="content">
+								<strong>Closest pair:</strong> Erelio Akis -- Lambda Zondas
+							</div>
+						</div>
+					</div> -->
+			<div class="ui" v-for="session in sessions">
+				<h1 class="ui header">{{ session.name }} - {{ session.drivers ? session.drivers.length : 0 }} drivers</h1>
+				<table class="ui celled table">
+						<thead>
+						<tr>
+							<th>Pos</th>
+							<th>Name</th>
+							<th>Last lap</th>
+							<th>Best lap</th>
+							<th>Average lap</th>
+							<th>Average 5 laps</th>
+							<th>Start pos</th>
+							<th>Inc (env)</th>
+							<th>Inc (car)</th>
+						</tr>
+						</thead>
+						<tbody>
+						<tr v-for="driver in session.drivers">
+							<td>{{ driver.pos }}</td>
+							<td>{{ driver.name }}</td>
+							<td>{{ driver.last_lap }}</td>
+							<td>{{ driver.best_lap }}</td>
+							<td>{{ driver.avg_lap }}</td>
+							<td>{{ driver.avg_5lap }}</td>
+							<td>{{ driver.start_pos }}</td>
+							<td>{{ driver.inc_env }}</td>
+							<td>{{ driver.inc_car }}</td>
+						</tr>
+						</tbody>
+					</table>
+				</div>
 			</div>
-			<a class="item">Link</a>
-		  </div>
 		</div>
+
+		<!-- development version, includes helpful console warnings -->
+		<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
 		<script>
-		
+			var app = new Vue({
+				el: '#app',
+				data: {
+					sessions: [],
+					dataUrl: 'http://localhost:3000'
+				},
+				created () {
+					$.ajax(this.dataUrl + '/data/sessions/index.json')
+					.then((json) => {
+						this.sessions = json.sessions;
+						let sessionsPromises = this.sessions.map(s => $.ajax(this.dataUrl + '/data/sessions/' + s.path));
+						Promise.all(sessionsPromises).then(sessions => {
+							this.sessions = sessions;
+						});
+					});
+				}
+			})
 		</script>
 	</body>
 </html>
