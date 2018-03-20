@@ -1,9 +1,18 @@
 {
-    "sessions": [
-        {
-            "path": "race1.json",
-            "name": "Race #1",
-            "last_update": 1515155568
-        }
-    ]
+ "sessions": [
+  {
+   "name": "Practice",
+   "type": 1,
+   "time": 300,
+   "wait_time": 0,
+   "elapsed_ms": 0,
+   "laps": 0,
+   "track": "nemuno_ziedas",
+   "track_config": "fastlap",
+   "session_index": 0,
+   "current_session_index": 0,
+   "session_count": 1,
+   "server_name": "Nemunring practice"
+  }
+ ]
 }

@@ -3,6 +3,7 @@
     "time_left": 96.3,
     "drivers": [
         {
+            "car_id": 30,
             "name": "Ayrton Senna",
             "pos": 1,
             "last_lap": 59.9,
@@ -11,9 +12,11 @@
             "avg_5lap": 59,
             "start_pos": 3,
             "inc_env": 0,
-            "inc_car": 1
+            "inc_car": 1,
+            "relative_url": "drivers/30.json"
         },
         {
+            "car_id": 10,
             "name": "Nigel Mansell",
             "pos": 2,
             "last_lap": 56.1,
@@ -22,7 +25,8 @@
             "avg_5lap": 56,
             "start_pos": 5,
             "inc_env": 0,
-            "inc_car": 0
+            "inc_car": 0,
+            "relative_url": "drivers/10.json"
         }
     ]
 }

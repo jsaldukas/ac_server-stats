@@ -87,7 +87,7 @@
 					$.ajax(this.dataUrl + '/data/sessions/index.json')
 					.then((json) => {
 						this.sessions = json.sessions;
-						let sessionsPromises = this.sessions.map(s => $.ajax(this.dataUrl + '/data/sessions/' + s.path));
+						let sessionsPromises = this.sessions.map(s => $.ajax(this.dataUrl + '/data/sessions/' + s.relative_url));
 						Promise.all(sessionsPromises).then(sessions => {
 							this.sessions = sessions;
 						});
