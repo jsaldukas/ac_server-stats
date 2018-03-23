@@ -9,6 +9,7 @@ import proto
 import time
 import os, os.path
 import json 
+import re
 
 if sys.version_info[0] != 3:
     print('This program requires Python 3')
@@ -114,38 +115,95 @@ class BinaryWriter(object):
             bytes_str = bytes_str[len(codecs.BOM_UTF32):]
         self.write_bytes(bytes_str, len(bytes_str))
 
-def updateDataFile(path, dataObj):
-    with open(path, 'w') as f:
-        f.write(json.dumps(dataObj, indent=1))
-        f.close()
+class AcSessionStats: 
+    def __init__(self):
+        self.sessions = {}
+        self.currentSession = None
+        self.connectedDrivers = {}
+        self.driversObj = {}
+        self.test = 1
 
-def updateSessionsIndex(sessionObj):
-    path = os.path.join(DATA_DIR, 'sessions/index.json')
-    fileObj = {"sessions": []}
+    def lapCompleted(self, lapObj, cars):
+        car_id = lapObj["car_id"]
+        if car_id not in self.driversObj:
+            self.driversObj[car_id] = {}
+        
+        self.driversObj[car_id][]
 
-    if os.path.isfile(path):
-        with open(path, 'r') as f:
-            content = f.read()
-            if content:
-                fileObj = json.loads(content)
-            f.close()
+    def driverUpdate(self, driverObj):
+        car_id = driverObj["car_id"]
+        self.connectedDrivers[car_id] = driverObj
 
-    currentRef = next((x for x in fileObj["sessions"] if "current_session_index" in x and x["current_session_index"] == sessionObj["current_session_index"]), None)
-    if currentRef:
-        fileObj["sessions"].remove(currentRef)
+    def driverRemove(self, car_id):
+        if car_id in self.connectedDrivers:
+            self.connectedDrivers.pop(car_id)
 
-    fileObj["sessions"].append(sessionObj)
+    def sessionUpdate(self, sessionObj):
+        sessionId = self.__getSessionId(sessionObj)
+        self.sessions[sessionId] = sessionObj
 
-    with open(path, 'w') as f:
-        f.write(json.dumps(fileObj, indent=1))
-        f.close()
+        sessionDir = os.path.join(DATA_DIR, 'sessions', sessionId)
+        if not os.path.isdir(sessionDir):
+            os.mkdir(sessionDir)
+
+        self.currentSession = sessionObj
+        self.__writeDataFile(os.path.join(sessionDir, "{}.json".format(sessionId)), sessionObj)
+        self.__updateSessionsIndex(sessionObj)
+
+    def __readDataFile(self, path):
+        if not os.path.isfile(path):
+            return None
+
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+                if content:
+                    fileObj = json.loads(content)
+                    return fileObj
+        except:
+            print ('Error while reading ' + path)
+            return None
+
+    def __writeDataFile(self, path, dataObj):
+        try:
+            with open(path, 'w') as f:
+                f.write(json.dumps(dataObj, indent=1))
+                f.close()
+
+            return True
+        except:
+            print ('Error while writing ' + path)
+            return False
+
+    def __getSessionId(self, sessionObj):
+        if "name" in sessionObj:
+            sessionName = sessionObj["name"]
+            sessionId = re.sub('[^0-9a-zA-Z]+', '_', sessionName)
+            return sessionId
+        else:
+            return None
+
+    def __updateSessionsIndex(self, sessionObj):
+        path = os.path.join(DATA_DIR, 'sessions/index.json')
+        sessionId = self.__getSessionId(sessionObj)
+
+        fileObj = self.__readDataFile(path)
+        if not fileObj:
+            fileObj = {"sessions": []}
+        
+        currentRef = next((x for x in fileObj["sessions"] if self.__getSessionId(x) == sessionId), None)
+        if currentRef:
+            fileObj["sessions"].remove(currentRef)
+
+        fileObj["sessions"].insert(0, sessionObj)
+
+        self.__writeDataFile(path, fileObj)
 
 class Pserver(object):
     def __init__(self):
         self.br = None
-        self.sessions = {}
-        self.connectedDrivers = {}
         self.test = 1
+        self.acSessionStats = AcSessionStats()
 
     def _check_protocol(self, protocol_version):
         '''
@@ -178,6 +236,18 @@ class Pserver(object):
         print('Car info: %d %s (%s), Driver: %s, Team: %s, GUID: %s, Connected: %s' %
               (car_id, car_model, car_skin, driver_name, driver_team, driver_guid, is_connected))
         # TODO: implement example testSetSessionInfo()
+
+        if is_connected:
+            driverObj = {
+                "car_id": car_id,
+                "name": driver_name,
+                "guid": driver_guid,
+                "car_model": car_model,
+                "is_connected": is_connected
+            }
+            self.acSessionStats.driverUpdate(driverObj)
+        else:
+            self.acSessionStats.driverRemove(car_id)
 
     def _handle_car_update(self):
         car_id = self.br.read_byte()
@@ -235,6 +305,8 @@ class Pserver(object):
         print('Driver: %s, GUID: %s' % (driver_name, driver_guid))
         print('Car: %d, Model: %s, Skin: %s' % (car_id, car_model, car_skin))
 
+        self.acSessionStats.driverRemove(car_id)
+
     def _handle_end_session(self):
         filename = self.br.read_utf_string()
         print('====')
@@ -254,16 +326,29 @@ class Pserver(object):
         print('Car: %d, Laptime: %d, Cuts: %d' % (car_id, laptime, cuts))
 
         cars_count = self.br.read_byte()
-
+        cars = []
         for i in range(1, cars_count + 1):
             rcar_id = self.br.read_byte()
             rtime = self.br.read_uint32()
             rlaps = self.br.read_byte()
             print('%d: Car ID: %d, Time: %d, Laps: %d' %
                   (i, rcar_id, rtime, rlaps))
+            cars.append({
+                "rcar_id": rcar_id,
+                "rtime": rtime,
+                "rlaps": rlaps
+            })
 
         grip_level = self.br.read_byte()
         print('Grip level: %d' % grip_level)
+
+        lapObj = {
+            "car_id": car_id,
+            "laptime": laptime,
+            "cuts": cuts
+        }
+
+        self.acSessionStats.lapCompleted(lapObj, cars)
 
     def _handle_new_connection(self):
         driver_name = self.br.read_utf_string()
@@ -276,6 +361,15 @@ class Pserver(object):
         print('New connection')
         print('Driver: %s, GUID: %s' % (driver_name, driver_guid))
         print('Car: %d, Model: %s, Skin: %s' % (car_id, car_model, car_skin))
+
+        driverObj = {
+            "car_id": car_id,
+            "name": driver_name,
+            "guid": driver_guid,
+            "car_model": car_model,
+            "is_connected": True
+        }
+        self.acSessionStats.driverUpdate(driverObj)
 
     def _handle_new_session(self):
         print('====')
@@ -315,15 +409,9 @@ class Pserver(object):
             "session_count": session_count,
             "server_name": server_name
         }
-        self.sessions[current_session_index] = sessionObj
-
-        sessionDir = os.path.join(DATA_DIR, 'sessions', str(current_session_index))
-        if not os.path.isdir(sessionDir):
-            os.mkdir(sessionDir)
-
-        updateDataFile(os.path.join(sessionDir, "{}.json".format(current_session_index)), sessionObj)
-        updateSessionsIndex(sessionObj)
-
+        
+        self.acSessionStats.sessionUpdate(sessionObj)
+        
         print('====')
         print('Session Info')
         print('Protocol version: %d' % protocol_version)
@@ -434,18 +522,6 @@ class Pserver(object):
 
         self._send(bw.buff)
         
-    def getlogfile(self):
-        if not self.logfile or (self.logfileTime and (datetime.datetime.now() - self.logfileTime) > datetime.timedelta(hours = 1)):
-            if self.logfile:
-                self.logfile.close()
-                
-            self.logfileTime = datetime.datetime.now()
-            filename = self.logfileTime.strftime('%Y-%m-%dT%H-%M-%S_log.dat')
-            self.logfile = open(filename, 'ab')
-            print('opened log file ' + filename)
-            
-        return self.logfile
-        
     def run(self):
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -453,6 +529,8 @@ class Pserver(object):
 
         self._enable_realtime_report()
         self._get_session_info()
+        for i in range(0, 40):
+            self._get_car_info(i)
         
         print('Waiting for data from %s:%s' % (UDP_IP, UDP_PORT))
 
