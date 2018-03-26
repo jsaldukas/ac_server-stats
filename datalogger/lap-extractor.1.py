@@ -5,11 +5,12 @@ import socket
 import struct
 import sys
 import datetime
-import proto
-import time
-import os, os.path
-import json 
+import glob
+import csv
 import re
+import os
+import os.path
+import proto
 
 if sys.version_info[0] != 3:
     print('This program requires Python 3')
@@ -18,9 +19,9 @@ if sys.version_info[0] != 3:
 SUPPORTED_PROTOCOLS = [2, 4]
 
 UDP_IP = "127.0.0.1"
-UDP_PORT = 12003
-UDP_SEND_PORT = 11003
-DATA_DIR = "../public/data"
+UDP_PORT = 12000
+UDP_SEND_PORT = 11000
+
 
 class Vector3f(object):
     def __init__(self):
@@ -77,6 +78,12 @@ class BinaryReader(object):
         r = struct.unpack_from(fmt, self.data, self.offset)[0]
         self.offset += struct.calcsize(fmt)
         return r
+        
+    def read_uint64(self):
+        fmt = 'Q'
+        r = struct.unpack_from(fmt, self.data, self.offset)[0]
+        self.offset += struct.calcsize(fmt)
+        return r
 
     def read_utf_string(self):
         length = self.read_byte()
@@ -115,95 +122,89 @@ class BinaryWriter(object):
             bytes_str = bytes_str[len(codecs.BOM_UTF32):]
         self.write_bytes(bytes_str, len(bytes_str))
 
-class AcSessionStats: 
-    def __init__(self):
-        self.sessions = {}
-        self.currentSession = None
-        self.connectedDrivers = {}
-        self.driversObj = {}
-        self.test = 1
+class CarLapExtractor:
+    id = 0
+    reNonAlpha = re.compile(r"[^a-zA-Z]")
 
-    def lapCompleted(self, lapObj, cars):
-        car_id = lapObj["car_id"]
-        if car_id not in self.driversObj:
-            self.driversObj[car_id] = {"laps": []}
+    def __init__(self, car_id):
+        self.car_id = car_id
+        self.frames = []
+        self.firstTimeMs = 0
         
-        self.driversObj[car_id]["laps"].append(lapObj)
-
-    def driverUpdate(self, driverObj):
-        car_id = driverObj["car_id"]
-        self.connectedDrivers[car_id] = driverObj
-
-    def driverRemove(self, car_id):
-        if car_id in self.connectedDrivers:
-            self.connectedDrivers.pop(car_id)
-
-    def sessionUpdate(self, sessionObj):
-        sessionId = self.__getSessionId(sessionObj)
-        self.sessions[sessionId] = sessionObj
-
-        sessionDir = os.path.join(DATA_DIR, 'sessions', sessionId)
-        if not os.path.isdir(sessionDir):
-            os.mkdir(sessionDir)
-
-        self.currentSession = sessionObj
-        self.__writeDataFile(os.path.join(sessionDir, "{}.json".format(sessionId)), sessionObj)
-        self.__updateSessionsIndex(sessionObj)
-
-    def __readDataFile(self, path):
-        if not os.path.isfile(path):
-            return None
-
-        try:
-            with open(path, 'r') as f:
-                content = f.read()
-                if content:
-                    fileObj = json.loads(content)
-                    return fileObj
-        except:
-            print ('Error while reading ' + path)
-            return None
-
-    def __writeDataFile(self, path, dataObj):
-        try:
-            with open(path, 'w') as f:
-                f.write(json.dumps(dataObj, indent=1))
-                f.close()
-
-            return True
-        except:
-            print ('Error while writing ' + path)
-            return False
-
-    def __getSessionId(self, sessionObj):
-        if "name" in sessionObj:
-            sessionName = sessionObj["name"]
-            sessionId = re.sub('[^0-9a-zA-Z]+', '_', sessionName)
-            return sessionId
+    def handleCarUpdate(self, carUpdate):
+        if not self.firstTimeMs:
+            self.firstTimeMs = carUpdate["time_ms"]
+        
+        carUpdate["time_ms"] -= self.firstTimeMs
+        self.frames.append(carUpdate)
+    
+    def __format_laptime(self, ms):
+        td = datetime.timedelta(milliseconds=ms)
+        return "{:02}.{:02}.{:03}".format(td.seconds // 60, td.seconds % 60, td.microseconds // 1000)
+        
+    def __create_lap_filepath(self, carLapCompleted, carInfo, sessionInfo):
+        folderpath = "laps/"
+        if sessionInfo:
+            folderpath += "{}_{}_airt={}_roadt={}/".format(sessionInfo["track"], sessionInfo["track_config"], sessionInfo["ambient_temp"], sessionInfo["road_temp"])
+        
+        if carInfo:
+            folderpath += carInfo["car_model"] + "/"
+        
+        if not os.path.isdir(folderpath):
+            os.makedirs(folderpath)
+        
+        filename = self.__format_laptime(carLapCompleted["laptime"]) + "_"
+        
+        if carInfo:
+            filename += CarLapExtractor.reNonAlpha.sub(carInfo["driver_name"], "_")
         else:
-            return None
-
-    def __updateSessionsIndex(self, sessionObj):
-        path = os.path.join(DATA_DIR, 'sessions/index.json')
-        sessionId = self.__getSessionId(sessionObj)
-
-        fileObj = self.__readDataFile(path)
-        if not fileObj:
-            fileObj = {"sessions": []}
+            filename += "{:02}".format(self.car_id)
+            
+        filename += "_{:06}".format(self.frames[len(self.frames)-1]["time_ms"])
         
-        currentRef = next((x for x in fileObj["sessions"] if self.__getSessionId(x) == sessionId), None)
-        if currentRef:
-            fileObj["sessions"].remove(currentRef)
+        i = 1
+        suffix = ''
+        while os.path.isfile(folderpath + filename + suffix + ".csv"):
+            i += 1
+            suffix = "{:03}".format(i)
+        
+        return folderpath + filename + suffix + ".csv"
+        
+    def closeLap(self, carLapCompleted, carInfo, sessionInfo):
+        CarLapExtractor.id += 1
+        
+        filename = self.__create_lap_filepath(carLapCompleted, carInfo, sessionInfo)
+        with open(filename, "w", newline="") as f:
+            csvwriter = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            csvwriter.writerow(list(self.frames[0].keys()))
+            for frame in self.frames:
+                csvwriter.writerow(list(frame.values()))
+                
+            f.close()
 
-        fileObj["sessions"].insert(0, sessionObj)
-
-        self.__writeDataFile(path, fileObj)
-
-class Pserver(object):
+class LapExtractor(object):
     def __init__(self):
         self.br = None
-        self.test = 1
-        self.acSessionStats = AcSessionStats()
+        self.sessionInfo = None
+        self.carsInfo = {}
+        self.carsLapExtractor = {}
+        self.lastRcars = None
+        self.connectedDrivers = {}
+    
+    def updateCarInfo(self, car_id, driver_name, driver_guid, car_model)
+        connectedDriver = {}
+        if car_id in self.connectedDrivers:
+            connectedDriver = self.connectedDrivers[car_id]
+        else:
+            self.connectedDrivers[car_id] = connectedDriver
+
+        connectedDriver["driver_name"] = driver_name
+        connectedDriver["driver_guid"] = driver_guid
+        connectedDriver["car_model"] = car_model
+    
+    def removeCar(self, car_id):
+        if car_id in self.connectedDrivers:
+            del self.connectedDrivers[car_id]
 
     def _check_protocol(self, protocol_version):
         '''
@@ -232,30 +233,47 @@ class Pserver(object):
         driver_team = self.br.read_utf_string()
         driver_guid = self.br.read_utf_string()
 
+        self.updateCarInfo(car_id, driver_name, driver_guid, car_model)
+
         print('====')
         print('Car info: %d %s (%s), Driver: %s, Team: %s, GUID: %s, Connected: %s' %
               (car_id, car_model, car_skin, driver_name, driver_team, driver_guid, is_connected))
         # TODO: implement example testSetSessionInfo()
 
-        if is_connected:
-            driverObj = {
-                "car_id": car_id,
-                "name": driver_name,
-                "guid": driver_guid,
-                "car_model": car_model,
-                "is_connected": is_connected
-            }
-            self.acSessionStats.driverUpdate(driverObj)
-        else:
-            self.acSessionStats.driverRemove(car_id)
-
-    def _handle_car_update(self):
+    def _handle_car_update(self, time_ms):
         car_id = self.br.read_byte()
         pos = self.br.read_vector_3f()
         velocity = self.br.read_vector_3f()
         gear = self.br.read_byte()
         engine_rpm = self.br.read_uint16()
         normalized_spline_pos = self.br.read_single()
+        
+        carUpdate = {
+            "time_ms": time_ms,
+            "car_id": car_id,
+            "pos_x": pos.x,
+            "pos_y": pos.y,
+            "pos_z": pos.z,
+            "velocity_x": velocity.x,
+            "velocity_y": velocity.y,
+            "velocity_z": velocity.z,
+            "gear": gear,
+            "engine_rpm": engine_rpm,
+            "normalized_spline_pos": normalized_spline_pos
+        }
+        
+        if car_id not in self.carsLapExtractor:
+            self.carsLapExtractor[car_id] = CarLapExtractor(car_id)
+        
+        self.carsLapExtractor[car_id].handleCarUpdate(carUpdate)
+        
+        #if not self.lapfileByCar[car_id]:
+        #    filename = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + str(car_id) + ".csv"
+        #    self.lapfileByCar[car_id] = open("laps/" + filename, "w")
+        
+        #self.lapfileByCar[car_id].write("{},{},{},{},{},{},
+        
+        
         print('====')
         print('Car update: %d, Position: %s, Velocity: %s, Gear: %d, RPM: %d, NSP: %f' %
               (car_id, pos, velocity, gear, engine_rpm, normalized_spline_pos))
@@ -300,12 +318,12 @@ class Pserver(object):
         car_model = self.br.read_string()
         car_skin = self.br.read_string()
 
+        self.removeCar(car_id)
+
         print('====')
         print('Connection closed')
         print('Driver: %s, GUID: %s' % (driver_name, driver_guid))
         print('Car: %d, Model: %s, Skin: %s' % (car_id, car_model, car_skin))
-
-        self.acSessionStats.driverRemove(car_id)
 
     def _handle_end_session(self):
         filename = self.br.read_utf_string()
@@ -321,34 +339,49 @@ class Pserver(object):
         laptime = self.br.read_uint32()
         cuts = self.br.read_byte()
 
+        #if car_id not in (13,10):
+        #    return
+
         print('====')
         print('Lap completed')
         print('Car: %d, Laptime: %d, Cuts: %d' % (car_id, laptime, cuts))
 
+        carLapCompleted = {
+            "car_id": car_id,
+            "laptime": laptime,
+            "cuts": cuts
+        }
+        
+        if car_id in self.carsLapExtractor:
+            carInfo = None
+            if car_id in self.carsInfo:
+                carInfo = self.carsInfo[car_id]
+            
+            self.carsLapExtractor[car_id].closeLap(carLapCompleted, carInfo, self.sessionInfo)
+            del self.carsLapExtractor[car_id]
+        
         cars_count = self.br.read_byte()
         cars = []
         for i in range(1, cars_count + 1):
             rcar_id = self.br.read_byte()
+            #if rcar_id not in (13, 10):
+            #    continue
+
             rtime = self.br.read_uint32()
             rlaps = self.br.read_byte()
-            print('%d: Car ID: %d, Time: %d, Laps: %d' %
-                  (i, rcar_id, rtime, rlaps))
             cars.append({
                 "rcar_id": rcar_id,
                 "rtime": rtime,
                 "rlaps": rlaps
             })
 
+            if True or not self.lastRcars or self.lastRcars[i-1]["rtime"] != rtime:
+                print('%d: Car ID: %d, Time: %d, Laps: %d' %
+                  (i, rcar_id, rtime, rlaps))
+
+        self.lastRcars = cars
         grip_level = self.br.read_byte()
         print('Grip level: %d' % grip_level)
-
-        lapObj = {
-            "car_id": car_id,
-            "laptime": laptime,
-            "cuts": cuts
-        }
-
-        self.acSessionStats.lapCompleted(lapObj, cars)
 
     def _handle_new_connection(self):
         driver_name = self.br.read_utf_string()
@@ -357,19 +390,22 @@ class Pserver(object):
         car_model = self.br.read_string()
         car_skin = self.br.read_string()
         
+        carInfo = {
+            "driver_name": driver_name,
+            "driver_guid": driver_guid,
+            "car_id": car_id,
+            "car_model": car_model,
+            "car_skin": car_skin
+        }
+
+        self.updateCarInfo(car_id, driver_name, driver_guid, car_model)
+        
+        self.carsInfo[car_id] = carInfo
+
         print('====')
         print('New connection')
         print('Driver: %s, GUID: %s' % (driver_name, driver_guid))
         print('Car: %d, Model: %s, Skin: %s' % (car_id, car_model, car_skin))
-
-        driverObj = {
-            "car_id": car_id,
-            "name": driver_name,
-            "guid": driver_guid,
-            "car_model": car_model,
-            "is_connected": True
-        }
-        self.acSessionStats.driverUpdate(driverObj)
 
     def _handle_new_session(self):
         print('====')
@@ -392,26 +428,16 @@ class Pserver(object):
         road_temp = self.br.read_byte()
         weather_graphics = self.br.read_string()
         elapsed_ms = self.br.read_int32()
+        
+        self.sessionInfo = {
+            "track": track,
+            "track_config": track_config,
+            "ambient_temp": ambient_temp,
+            "road_temp": road_temp
+        }
 
         self._check_protocol(protocol_version)
 
-        sessionObj = {
-            "name": name,
-            "type": typ,
-            "time": time,
-            "wait_time": wait_time,
-            "elapsed_ms": elapsed_ms,
-            "laps": laps,
-            "track": track,
-            "track_config": track_config,
-            "session_index": session_index,
-            "current_session_index": current_session_index,
-            "session_count": session_count,
-            "server_name": server_name
-        }
-        
-        self.acSessionStats.sessionUpdate(sessionObj)
-        
         print('====')
         print('Session Info')
         print('Protocol version: %d' % protocol_version)
@@ -427,10 +453,6 @@ class Pserver(object):
         print('Weather: %s, Ambient temp: %d, Road temp: %d' %
               (weather_graphics, ambient_temp, road_temp))
         print('Elapsed ms: %d' % elapsed_ms)
-
-        if self.test == 1:
-            self.test = 2
-            self._next_session()
 
     def _handle_version(self):
         protocol_version = self.br.read_byte()
@@ -473,17 +495,6 @@ class Pserver(object):
 
         self._send(bw.buff)
 
-    def _get_session_info(self):
-        '''
-        Requests session info
-        '''
-        bw = BinaryWriter()
-
-        bw.write_byte(proto.ACSP_GET_SESSION_INFO)
-        bw.write_byte(0)
-
-        self._send(bw.buff)
-
     def _enable_realtime_report(self):
         bw = BinaryWriter()
         bw.write_byte(proto.ACSP_REALTIMEPOS_INTERVAL)
@@ -521,59 +532,59 @@ class Pserver(object):
         bw.write_utf_string(message)
 
         self._send(bw.buff)
-        
-    def run(self):
 
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(("", UDP_PORT))
+    def run(self, files):
+        self.carsLapExtractor = {}
+        self.carsInfo = {}
+        for file in files:
+            with open(file, 'rb') as logfile:
+                
+                while True:
+                    sdata = logfile.read(1032)
+                    if len(sdata) == 0:
+                        break
+                        
+                    self.br = BinaryReader(sdata)
+                    
+                    time_ms = self.br.read_uint64()
+                    packet_id = self.br.read_byte()
+                    
+                    #print("Time: {:6} Type: {}".format(time_ms, packet_id))
+                    
+                    if packet_id == proto.ACSP_ERROR:
+                        self._handle_error()
+                    elif packet_id == proto.ACSP_CHAT:
+                        self._handle_chat()
+                    elif packet_id == proto.ACSP_CLIENT_LOADED:
+                        self._handle_client_loaded()
+                    elif packet_id == proto.ACSP_VERSION:
+                        self._handle_version()
+                    elif packet_id == proto.ACSP_NEW_SESSION:
+                        self._handle_new_session()
+                        self._handle_session_info()
 
-        self._enable_realtime_report()
-        self._get_session_info()
-        for i in range(0, 40):
-            self._get_car_info(i)
-        
-        print('Waiting for data from %s:%s' % (UDP_IP, UDP_PORT))
-
-        while True:
-            sdata, _addr = self.sock.recvfrom(1024)  # buffer size is 1024 bytes
-            
-            self.br = BinaryReader(sdata)
-            packet_id = self.br.read_byte()
-        
-            if packet_id == proto.ACSP_ERROR:
-                self._handle_error()
-            elif packet_id == proto.ACSP_CHAT:
-                self._handle_chat()
-            elif packet_id == proto.ACSP_CLIENT_LOADED:
-                self._handle_client_loaded()
-            elif packet_id == proto.ACSP_VERSION:
-                self._handle_version()
-            elif packet_id == proto.ACSP_NEW_SESSION:
-                self._handle_new_session()
-                self._handle_session_info()
-
-                # Uncomment to enable realtime position reports
-                self._enable_realtime_report()
-            elif packet_id == proto.ACSP_SESSION_INFO:
-                self._handle_session_info()
-            elif packet_id == proto.ACSP_END_SESSION:
-                self._handle_end_session()
-            elif packet_id == proto.ACSP_CLIENT_EVENT:
-                self._handle_client_event()
-            elif packet_id == proto.ACSP_CAR_INFO:
-                self._handle_car_info()
-            elif packet_id == proto.ACSP_CAR_UPDATE:
-                self._handle_car_update()
-            elif packet_id == proto.ACSP_NEW_CONNECTION:
-                self._handle_new_connection()
-            elif packet_id == proto.ACSP_CONNECTION_CLOSED:
-                self._handle_connection_closed()
-            elif packet_id == proto.ACSP_LAP_COMPLETED:
-                self._handle_lap_completed()
-            else:
-                print('** UNKOWNN PACKET ID: %d' % packet_id)
-
+                    #    Uncomment to enable realtime position reports
+                        self._enable_realtime_report()
+                    elif packet_id == proto.ACSP_SESSION_INFO:
+                        self._handle_session_info()
+                    elif packet_id == proto.ACSP_END_SESSION:
+                        self._handle_end_session()
+                    elif packet_id == proto.ACSP_CLIENT_EVENT:
+                        self._handle_client_event()
+                    elif packet_id == proto.ACSP_CAR_INFO:
+                        self._handle_car_info()
+                    elif packet_id == proto.ACSP_CAR_UPDATE:
+                        self._handle_car_update(time_ms)
+                    elif packet_id == proto.ACSP_NEW_CONNECTION:
+                        self._handle_new_connection()
+                    elif packet_id == proto.ACSP_CONNECTION_CLOSED:
+                        self._handle_connection_closed()
+                    elif packet_id == proto.ACSP_LAP_COMPLETED:
+                        self._handle_lap_completed()
+                    else:
+                       print('** UNKOWNN PACKET ID: %d' % packet_id)
 
 if __name__ == '__main__':
-    p = Pserver()
-    p.run()
+    p = LapExtractor()
+    files = glob.glob(sys.argv[1])
+    p.run(files)

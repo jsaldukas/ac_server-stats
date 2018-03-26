@@ -18,9 +18,8 @@ if sys.version_info[0] != 3:
 SUPPORTED_PROTOCOLS = [2, 4]
 
 UDP_IP = "127.0.0.1"
-UDP_PORT = 12003
-UDP_SEND_PORT = 11003
-DATA_DIR = "../public/data"
+UDP_PORT = 11003
+UDP_SEND_PORT = 12003
 
 class Vector3f(object):
     def __init__(self):
@@ -115,95 +114,9 @@ class BinaryWriter(object):
             bytes_str = bytes_str[len(codecs.BOM_UTF32):]
         self.write_bytes(bytes_str, len(bytes_str))
 
-class AcSessionStats: 
-    def __init__(self):
-        self.sessions = {}
-        self.currentSession = None
-        self.connectedDrivers = {}
-        self.driversObj = {}
-        self.test = 1
-
-    def lapCompleted(self, lapObj, cars):
-        car_id = lapObj["car_id"]
-        if car_id not in self.driversObj:
-            self.driversObj[car_id] = {"laps": []}
-        
-        self.driversObj[car_id]["laps"].append(lapObj)
-
-    def driverUpdate(self, driverObj):
-        car_id = driverObj["car_id"]
-        self.connectedDrivers[car_id] = driverObj
-
-    def driverRemove(self, car_id):
-        if car_id in self.connectedDrivers:
-            self.connectedDrivers.pop(car_id)
-
-    def sessionUpdate(self, sessionObj):
-        sessionId = self.__getSessionId(sessionObj)
-        self.sessions[sessionId] = sessionObj
-
-        sessionDir = os.path.join(DATA_DIR, 'sessions', sessionId)
-        if not os.path.isdir(sessionDir):
-            os.mkdir(sessionDir)
-
-        self.currentSession = sessionObj
-        self.__writeDataFile(os.path.join(sessionDir, "{}.json".format(sessionId)), sessionObj)
-        self.__updateSessionsIndex(sessionObj)
-
-    def __readDataFile(self, path):
-        if not os.path.isfile(path):
-            return None
-
-        try:
-            with open(path, 'r') as f:
-                content = f.read()
-                if content:
-                    fileObj = json.loads(content)
-                    return fileObj
-        except:
-            print ('Error while reading ' + path)
-            return None
-
-    def __writeDataFile(self, path, dataObj):
-        try:
-            with open(path, 'w') as f:
-                f.write(json.dumps(dataObj, indent=1))
-                f.close()
-
-            return True
-        except:
-            print ('Error while writing ' + path)
-            return False
-
-    def __getSessionId(self, sessionObj):
-        if "name" in sessionObj:
-            sessionName = sessionObj["name"]
-            sessionId = re.sub('[^0-9a-zA-Z]+', '_', sessionName)
-            return sessionId
-        else:
-            return None
-
-    def __updateSessionsIndex(self, sessionObj):
-        path = os.path.join(DATA_DIR, 'sessions/index.json')
-        sessionId = self.__getSessionId(sessionObj)
-
-        fileObj = self.__readDataFile(path)
-        if not fileObj:
-            fileObj = {"sessions": []}
-        
-        currentRef = next((x for x in fileObj["sessions"] if self.__getSessionId(x) == sessionId), None)
-        if currentRef:
-            fileObj["sessions"].remove(currentRef)
-
-        fileObj["sessions"].insert(0, sessionObj)
-
-        self.__writeDataFile(path, fileObj)
-
 class Pserver(object):
     def __init__(self):
         self.br = None
-        self.test = 1
-        self.acSessionStats = AcSessionStats()
 
     def _check_protocol(self, protocol_version):
         '''
@@ -523,6 +436,9 @@ class Pserver(object):
         self._send(bw.buff)
         
     def run(self):
+        with open(sys.argv[1], 'rb') as f:
+            while f:
+                packet = 
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("", UDP_PORT))
